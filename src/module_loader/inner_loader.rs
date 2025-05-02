@@ -9,6 +9,7 @@ use crate::Error;
 use deno_core::error::{AnyError, ModuleLoaderError};
 use deno_core::futures::FutureExt;
 use deno_core::url::ParseError;
+use deno_core::ModuleResolutionError::ImportPrefixMissing;
 use deno_core::{
     FastString, ModuleLoadResponse, ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType,
 };
@@ -164,6 +165,8 @@ impl InnerRustyLoader {
         referrer: &str,
         kind: deno_core::ResolutionKind,
     ) -> Result<ModuleSpecifier, ModuleLoaderError> {
+        // println!("resolve {specifier}");
+
         #[cfg(feature = "node_experimental")]
         let referrer_specifier = referrer
             .to_module_specifier(&self.cwd)
@@ -183,6 +186,8 @@ impl InnerRustyLoader {
             return self.load_npm(specifier, referrer);
         }
 
+        // println!("specifier: {specifier} referrer: {referrer} kind: {kind:?}");
+
         //
         // Use node resolution if we're in an npm package
         #[cfg(feature = "node_experimental")]
@@ -193,7 +198,22 @@ impl InnerRustyLoader {
         }
 
         // Resolve the module specifier to an absolute URL
-        let url = deno_core::resolve_import(specifier, referrer)?;
+        // let url = deno_core::resolve_import(specifier, referrer)?;
+        let url = match deno_core::resolve_import(specifier, referrer) {
+            Ok(url) => url,
+            #[cfg(feature = "node_experimental")]
+            Err(ImportPrefixMissing {
+                specifier,
+                maybe_referrer: _,
+            }) => {
+                // eprintln!("load_npm {specifier} {maybe_referrer:?}");
+                return self.load_npm(specifier.as_str(), referrer);
+            }
+            Err(e) => {
+                // eprintln!("resolve_import error {e}");
+                return Err(JsErrorBox::from_err(e).into());
+            }
+        };
 
         // Check if the module is in the cache
         if self
